@@ -22,4 +22,14 @@ class FoodResourceTest {
         assertFalse(resource.consumeOne());
         assertEquals(0, resource.getAvailableFood());
     }
+
+    @Test
+    void generateFoodOnStarvation_shouldReturnAmountBetweenOneAndFive() {
+        Simulation simulation = new Simulation(0, 10, 1000, 200);
+        Cell cell = new Cell(simulation, 1, CellType.ASEXUAL, 200);
+
+        int foodAmount = cell.generateFoodOnStarvation();
+
+        assertTrue(foodAmount >= 1 && foodAmount <= 5);
+    }
 }

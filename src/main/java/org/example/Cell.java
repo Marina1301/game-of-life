@@ -12,7 +12,6 @@ public class Cell implements Runnable {
     private final Simulation simulation;
     private final int id;
     private final CellType type;
-    private final long fullDurationMs;
     private final long starvationDurationMs;
     private final Random random = new Random();
     private final AtomicBoolean alive = new AtomicBoolean(true);
@@ -21,11 +20,10 @@ public class Cell implements Runnable {
     private int feedCount;
     private long lastMealTime;
 
-    public Cell(Simulation simulation, int id, CellType type, long fullDurationMs, long starvationDurationMs) {
+    public Cell(Simulation simulation, int id, CellType type, long starvationDurationMs) {
         this.simulation = simulation;
         this.id = id;
         this.type = type;
-        this.fullDurationMs = fullDurationMs;
         this.starvationDurationMs = starvationDurationMs;
         this.lastMealTime = System.currentTimeMillis();
     }
@@ -49,8 +47,9 @@ public class Cell implements Runnable {
             } else {
                 long elapsed = System.currentTimeMillis() - lastMealTime;
                 if (elapsed >= starvationDurationMs) {
-                    die();
-                    System.out.printf("[%s] Cell %d starved and produced %d food units.%n", timestamp(), id, 1 + random.nextInt(5));
+                    int foodProduced = generateFoodOnStarvation();
+                    die(foodProduced);
+                    System.out.printf("[%s] Cell %d starved and produced %d food units.%n", timestamp(), id, foodProduced);
                     break;
                 }
 
@@ -100,9 +99,13 @@ public class Cell implements Runnable {
         }
     }
 
-    private void die() {
+    private void die(int foodAmount) {
         alive.set(false);
-        simulation.addFood(1 + random.nextInt(5));
+        simulation.addFood(foodAmount);
+    }
+
+    int generateFoodOnStarvation() {
+        return 1 + random.nextInt(5);
     }
 
     private static String timestamp() {
