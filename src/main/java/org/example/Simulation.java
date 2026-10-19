@@ -16,7 +16,7 @@ public class Simulation {
     private final ReentrantLock reproductionLock = new ReentrantLock();
     private final long starvationDurationMs;
 
-    public Simulation(int cellCount, int initialFood, long fullDurationMs, long starvationDurationMs) {
+    public Simulation(int cellCount, int initialFood, long starvationDurationMs) {
         this.foodResource = new FoodResource(initialFood);
         this.starvationDurationMs = starvationDurationMs;
 
