@@ -1,48 +1,26 @@
 package org.example;
 
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 public class FoodResource {
-    private final ReentrantLock lock = new ReentrantLock();
-    private int availableFood;
+    private final Semaphore food;
 
     public FoodResource(int initialFood) {
-        this.availableFood = Math.max(0, initialFood);
+        this.food = new Semaphore(Math.max(0, initialFood), true);
     }
 
-    public boolean consumeOne() {
-        lock.lock();
-        try {
-            if (availableFood <= 0) {
-                return false;
-            }
-
-            availableFood--;
-            return true;
-        } finally {
-            lock.unlock();
-        }
+    public boolean tryConsume(long timeoutMs) throws InterruptedException {
+        return food.tryAcquire(timeoutMs, TimeUnit.MILLISECONDS);
     }
 
     public void addFood(int amount) {
-        if (amount <= 0) {
-            return;
-        }
-
-        lock.lock();
-        try {
-            availableFood += amount;
-        } finally {
-            lock.unlock();
+        if (amount > 0) {
+            food.release(amount);
         }
     }
 
     public int getAvailableFood() {
-        lock.lock();
-        try {
-            return availableFood;
-        } finally {
-            lock.unlock();
-        }
+        return food.availablePermits();
     }
 }
