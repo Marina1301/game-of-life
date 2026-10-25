@@ -2,81 +2,99 @@ package org.example;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Random;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Cell implements Runnable {
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
+    private static final int MEALS_TO_REPRODUCE = 10;
 
     private final Simulation simulation;
     private final int id;
     private final CellType type;
-    private final long starvationDurationMs;
-    private final Random random = new Random();
+    private final long fullDurationMs;       // T_full
+    private final long starvationDurationMs; // T_starve
+
     private final AtomicBoolean alive = new AtomicBoolean(true);
-    private final AtomicBoolean reproducing = new AtomicBoolean(false);
+    private final AtomicBoolean paired = new AtomicBoolean(false);
 
     private int feedCount;
-    private long lastMealTime;
 
-    public Cell(Simulation simulation, int id, CellType type, long starvationDurationMs) {
+    public Cell(Simulation simulation, int id, CellType type, long fullDurationMs, long starvationDurationMs) {
         this.simulation = simulation;
         this.id = id;
         this.type = type;
+        this.fullDurationMs = fullDurationMs;
         this.starvationDurationMs = starvationDurationMs;
-        this.lastMealTime = System.currentTimeMillis();
     }
 
     @Override
     public void run() {
-        while (alive.get() && simulation.isRunning()) {
-            int beforeFood = simulation.getFoodAvailable();
-            if (simulation.consumeFood()) {
-                int afterFood = simulation.getFoodAvailable();
-                feedCount++;
-                lastMealTime = System.currentTimeMillis();
-                System.out.printf("[%s] Cell %d (%s) consumed food: %d -> %d%n", timestamp(), id, type, beforeFood, afterFood);
-
-                if (feedCount >= 10) {
-                    attemptReproduction();
-                    feedCount = 0;
-                }
-
-                sleepRandomly();
-            } else {
-                long elapsed = System.currentTimeMillis() - lastMealTime;
-                if (elapsed >= starvationDurationMs) {
-                    int foodProduced = generateFoodOnStarvation();
-                    die(foodProduced);
-                    System.out.printf("[%s] Cell %d starved and produced %d food units.%n", timestamp(), id, foodProduced);
+        try {
+            while (alive.get() && simulation.isRunning()) {
+                if (!simulation.tryConsumeFood(starvationDurationMs)) {
+                    if (simulation.isRunning()) {
+                        starve();
+                    }
                     break;
                 }
 
-                try {
-                    Thread.sleep(50L);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
+                feedCount++;
+                log("ate (meal #%d). Food left: %d", feedCount, simulation.getFoodAvailable());
+
+                long fullUntil = System.currentTimeMillis() + fullDurationMs;
+
+                if (feedCount >= MEALS_TO_REPRODUCE) {
+                    if (reproduce(fullUntil)) {
+                        feedCount = 0;
+                    }
+
+                    if (!alive.get()) {
+                        break;
+                    }
+                }
+
+                long remaining = fullUntil - System.currentTimeMillis();
+                if (remaining > 0) {
+                    Thread.sleep(remaining);
                 }
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            simulation.onCellFinished(this);
         }
     }
 
-    public void attemptReproduction() {
+    private boolean reproduce(long fullUntil) throws InterruptedException {
         if (type == CellType.ASEXUAL) {
-            simulation.reproduceAsexual(this);
-        } else {
-            simulation.reproduceSexual(this);
+            return simulation.divide(this);
+        }
+        return simulation.mate(this, fullUntil - System.currentTimeMillis());
+    }
+
+    private void starve() {
+        if (alive.compareAndSet(true, false)) {
+            int foodProduced = 1 + ThreadLocalRandom.current().nextInt(5);
+            simulation.addFood(foodProduced);
+            log("starved to death and produced %d food units.", foodProduced);
         }
     }
 
-    public boolean tryBeginReproduction() {
-        return reproducing.compareAndSet(false, true);
+    boolean deactivate() {
+        return alive.compareAndSet(true, false);
     }
 
-    public void finishReproduction() {
-        reproducing.set(false);
+    void markPaired() {
+        paired.set(true);
+    }
+
+    void resetPaired() {
+        paired.set(false);
+    }
+
+    boolean isPaired() {
+        return paired.get();
     }
 
     public boolean isAlive() {
@@ -91,25 +109,9 @@ public class Cell implements Runnable {
         return type;
     }
 
-    private void sleepRandomly() {
-        try {
-            TimeUnit.MILLISECONDS.sleep(150L + random.nextInt(200));
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    private void die(int foodAmount) {
-        alive.set(false);
-        simulation.addFood(foodAmount);
-    }
-
-    int generateFoodOnStarvation() {
-        return 1 + random.nextInt(5);
-    }
-
-    private static String timestamp() {
-        return LocalTime.now().format(TIME_FORMATTER);
+    private void log(String format, Object... args) {
+        String prefix = String.format("[%s] Cell %d (%s) ", LocalTime.now().format(TIME_FORMATTER), id, type);
+        System.out.println(prefix + String.format(format, args));
     }
 
     @Override

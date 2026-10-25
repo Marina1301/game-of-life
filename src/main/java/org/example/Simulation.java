@@ -2,60 +2,83 @@ package org.example;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class Simulation {
+
+public final class Simulation {
     private final FoodResource foodResource;
-    private final CopyOnWriteArrayList<Cell> cells = new CopyOnWriteArrayList<>();
-    private final List<Thread> workerThreads = new ArrayList<>();
+    private final Map<Cell, Thread> activeCells = new ConcurrentHashMap<>();
+    private final ReentrantLock matingLock = new ReentrantLock();
+    private final Condition mated = matingLock.newCondition();
+    private Cell waitingSuitor;
+
+    private final List<Cell> initialCells = new ArrayList<>();
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicInteger idGenerator = new AtomicInteger(1);
-    private final ReentrantLock reproductionLock = new ReentrantLock();
-    private final long starvationDurationMs;
 
-    public Simulation(int cellCount, int initialFood, long starvationDurationMs) {
+    private final long fullDurationMs;       // T_full
+    private final long starvationDurationMs; // T_starve
+
+    public Simulation(int cellCount, int initialFood, long fullDurationMs, long starvationDurationMs) {
         this.foodResource = new FoodResource(initialFood);
+        this.fullDurationMs = fullDurationMs;
         this.starvationDurationMs = starvationDurationMs;
 
         for (int i = 0; i < cellCount; i++) {
             CellType type = (i % 2 == 0) ? CellType.ASEXUAL : CellType.SEXUAL;
-            Cell cell = new Cell(this, idGenerator.getAndIncrement(), type, starvationDurationMs);
-            cells.add(cell);
+            initialCells.add(newCell(type));
         }
+    }
+
+    private Cell newCell(CellType type) {
+        return new Cell(this, idGenerator.getAndIncrement(), type, fullDurationMs, starvationDurationMs);
     }
 
     public void start() {
         if (running.getAndSet(true)) {
             return;
         }
-
-        workerThreads.clear();
-        for (Cell cell : cells) {
-            startThread(cell);
+        for (Cell cell : initialCells) {
+            startCell(cell);
         }
-
-        System.out.println("Simulation started with " + cells.size() + " cells.");
+        initialCells.clear();
+        System.out.println("Simulation started with " + activeCells.size() + " cells.");
     }
 
-    private void startThread(Cell cell) {
+    private void startCell(Cell cell) {
+        if (!running.get()) {
+            return;
+        }
         Thread thread = new Thread(cell, "Cell-" + cell.getId());
-        workerThreads.add(thread);
+        activeCells.put(cell, thread);
         thread.start();
+
+        if (!running.get()) {
+            thread.interrupt();
+        }
+    }
+
+    void onCellFinished(Cell cell) {
+        activeCells.remove(cell);
     }
 
     public void stop() {
         running.set(false);
-        for (Thread thread : workerThreads) {
-            if (thread.isAlive()) {
-                try {
-                    thread.join(250L);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
+        List<Thread> threads = new ArrayList<>(activeCells.values());
+        for (Thread thread : threads) {
+            thread.interrupt(); 
+        }
+        for (Thread thread : threads) {
+            try {
+                thread.join(500L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
             }
         }
     }
@@ -64,64 +87,73 @@ public class Simulation {
         return running.get();
     }
 
-    public boolean consumeFood() {
-        return foodResource.consumeOne();
+    public boolean tryConsumeFood(long timeoutMs) throws InterruptedException {
+        return foodResource.tryConsume(timeoutMs);
     }
 
     public void addFood(int amount) {
         foodResource.addFood(amount);
     }
 
-    public void reproduceAsexual(Cell parent) {
-        if (!running.get()) {
-            return;
+
+    public boolean divide(Cell parent) {
+        if (!running.get() || !parent.deactivate()) {
+            return false;
         }
-
-        Cell child = new Cell(this, idGenerator.getAndIncrement(), parent.getType(), starvationDurationMs);
-        cells.add(child);
-        startThread(child);
-
-        System.out.println("Asexual reproduction: " + parent + " created " + child);
+        Cell child1 = newCell(parent.getType());
+        Cell child2 = newCell(parent.getType());
+        startCell(child1);
+        startCell(child2);
+        System.out.println("Asexual division: " + parent + " -> " + child1 + " + " + child2);
+        return true;
     }
 
-    public void reproduceSexual(Cell parent) {
-        if (!parent.tryBeginReproduction()) {
-            return;
+    public boolean mate(Cell cell, long timeoutMs) throws InterruptedException {
+        if (!running.get() || timeoutMs <= 0) {
+            return false;
         }
 
-        reproductionLock.lock();
-        Cell partner = null;
+        Cell partner;
+        matingLock.lock();
         try {
-            for (Cell candidate : cells) {
-                if (candidate == parent || !candidate.isAlive() || candidate.getType() != CellType.SEXUAL) {
-                    continue;
-                }
+            cell.resetPaired();
 
-                if (candidate.tryBeginReproduction()) {
-                    partner = candidate;
-                    break;
+            if (waitingSuitor == null) {
+                waitingSuitor = cell;
+                try {
+                    long remaining = timeoutMs * 1_000_000L;
+                    while (!cell.isPaired() && remaining > 0 && running.get()) {
+                        remaining = mated.awaitNanos(remaining);
+                    }
+                    return cell.isPaired();
+                } finally {
+                    if (waitingSuitor == cell) {
+                        waitingSuitor = null;
+                    }
                 }
             }
 
-            if (partner == null) {
-                return;
-            }
-
-            Cell child = new Cell(this, idGenerator.getAndIncrement(), CellType.SEXUAL, starvationDurationMs);
-            cells.add(child);
-            startThread(child);
-
-            System.out.println("Sexual reproduction: " + parent + " + " + partner + " created " + child);
+            partner = waitingSuitor;
+            waitingSuitor = null;
+            partner.markPaired();
+            mated.signal();
         } finally {
-            if (partner != null) {
-                partner.finishReproduction();
-            }
-            parent.finishReproduction();
-            reproductionLock.unlock();
+            matingLock.unlock();
         }
+
+        Cell child = newCell(CellType.SEXUAL);
+        startCell(child);
+        if (running.get()) {
+            System.out.println("Sexual reproduction: " + partner + " + " + cell + " -> " + child);
+        }
+        return true;
     }
 
     public int getFoodAvailable() {
         return foodResource.getAvailableFood();
+    }
+
+    public int getAliveCellCount() {
+        return activeCells.size();
     }
 }
