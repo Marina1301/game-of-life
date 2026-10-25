@@ -9,21 +9,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * VARIANTA GRESITA #1: data races si date inconsistente.
- *
- * Bug-uri intentionate (pe langa cele din RaceFoodResource):
- *  R4 - ArrayList modificata concurent (add din mai multe fire) si parcursa in acelasi timp
- *       -> adaugari pierdute, intrari null, ConcurrentModificationException.
- *  R5 - contor de populatie "aliveCount++ / --" neatomic -> valoare gresita.
- *  R6 - flag-ul "running" nu e volatile -> JMM nu garanteaza ca firele vad oprirea.
- *  R7 - imperechere fara lock: check-then-act pe "waitingOffer" -> acelasi pretendent
- *       poate fi luat de doi parteneri (doi copii dintr-o singura "pereche"), iar un
- *       pretendent poate fi suprascris si pierdut.
- *  R8 - generator de id-uri "nextId++" neatomic -> id-uri duplicate.
- *
- * Contoarele "audit*" sunt CORECTE (atomice) si exista doar ca sa masuram paguba.
- */
 final class RaceSimulation {
     final RaceFoodResource food;
     private final int initialFood;
@@ -45,7 +30,6 @@ final class RaceSimulation {
     private final AtomicInteger auditCreated = new AtomicInteger();
     private final AtomicInteger auditLive = new AtomicInteger();
     private final AtomicInteger listAddFailures = new AtomicInteger();
-    private final AtomicInteger censusFailures = new AtomicInteger();
     private final AtomicInteger duplicateIds = new AtomicInteger();
     private final AtomicInteger suitorsTakenTwice = new AtomicInteger();
     private final AtomicInteger lostSuitors = new AtomicInteger();
@@ -223,8 +207,6 @@ final class RaceSimulation {
                 auditCreated.get(), cells.size(), nullEntries, listAddFailures.get(),
                 verdict(auditCreated.get() == cells.size() && nullEntries == 0 && listAddFailures.get() == 0,
                         "corrupted ArrayList (R4)"));
-        System.out.printf("Census iterations that crashed (CME/NPE): %d -> %s%n", censusFailures.get(),
-                verdict(censusFailures.get() == 0, "iteration during modification (R4)"));
         System.out.printf("Population counter: %d, real live threads: %d -> %s%n",
                 aliveCount, auditLive.get(), verdict(aliveCount == auditLive.get(), "non-atomic ++/-- (R5)"));
         System.out.printf("Duplicate cell ids: %d -> %s%n", duplicateIds.get(),
