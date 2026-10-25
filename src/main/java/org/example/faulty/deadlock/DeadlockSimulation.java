@@ -63,7 +63,6 @@ final class DeadlockSimulation {
             return;
         }
         Thread thread = new Thread(cell, "DeadlockCell-" + cell.getId());
-        // Firele blocate in deadlock nu pot fi oprite; daemon ca JVM-ul sa se poata inchide.
         thread.setDaemon(true);
         activeCells.put(cell, thread);
         thread.start();
@@ -102,7 +101,6 @@ final class DeadlockSimulation {
         return true;
     }
 
-    /** D1: doua monitoare luate intr-o ordine care depinde de "cine sunt eu". */
     boolean mate(DeadlockCell cell, long timeoutMs) throws InterruptedException {
         if (!running.get() || timeoutMs <= 0) {
             return false;

@@ -8,7 +8,7 @@ public class DeadlockMain {
     private static final long RUN_MS = 6000L;
 
     public static void main(String[] args) throws InterruptedException {
-        System.out.println("Game of Life - FAULTY #2: deadlock");
+        System.out.println("Game of Life");
         DeadlockSimulation simulation = new DeadlockSimulation(4, 1000, 100L, 1500L);
         simulation.start();
 

@@ -66,9 +66,9 @@ final class RaceSimulation {
     }
 
     private RaceCell newCell(CellType type) {
-        int id = nextId;   // R8: citire...
-        Thread.yield();
-        nextId = id + 1;   // ...scriere: doua fire pot primi acelasi id
+        int id = nextId;
+        
+        nextId = id + 1;
         if (!seenIds.add(id)) {
             duplicateIds.incrementAndGet();
         }
@@ -80,7 +80,7 @@ final class RaceSimulation {
             return;
         }
         try {
-            cells.add(cell); // R4: ArrayList.add concurent -> poate pierde elemente sau arunca exceptii
+            cells.add(cell);
         } catch (RuntimeException e) {
             listAddFailures.incrementAndGet();
         }
@@ -93,20 +93,19 @@ final class RaceSimulation {
 
     void cellStarted() {
         auditLive.incrementAndGet();
-        int current = aliveCount; // R5
-        Thread.yield();
+        int current = aliveCount;
+
         aliveCount = current + 1;
     }
 
     void cellFinished() {
         auditLive.decrementAndGet();
-        int current = aliveCount; // R5
-        Thread.yield();
+        int current = aliveCount;
         aliveCount = current - 1;
     }
 
     boolean isRunning() {
-        return running; // R6: citire nevolatila
+        return running;
     }
 
     void recordMeal() {
@@ -128,20 +127,18 @@ final class RaceSimulation {
         return true;
     }
 
-    /** R7: imperechere fara nicio sincronizare. */
     boolean mate(RaceCell cell, long timeoutMs) throws InterruptedException {
         if (!running || timeoutMs <= 0) {
             return false;
         }
 
-        Offer offer = waitingOffer;                  // check...
+        Offer offer = waitingOffer;
         if (offer != null && offer.cell != cell) {
-            Thread.yield();
-            waitingOffer = null;                     // ...then act: doi parteneri pot lua aceeasi oferta
+            waitingOffer = null;
             if (offer.takers.incrementAndGet() > 1) {
                 suitorsTakenTwice.incrementAndGet();
             }
-            offer.cell.paired = true;                // scriere simpla, citita prin polling de alt fir
+            offer.cell.paired = true;
             startCell(newCell(CellType.SEXUAL));
             sexualChildren.incrementAndGet();
             return true;
@@ -149,11 +146,11 @@ final class RaceSimulation {
 
         Offer mine = new Offer(cell);
         cell.paired = false;
-        waitingOffer = mine;                         // poate suprascrie un pretendent sosit intre timp
+        waitingOffer = mine;
 
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (!cell.paired && running && System.currentTimeMillis() < deadline) {
-            Thread.sleep(2);
+            //Thread.sleep(2);
         }
         if (cell.paired) {
             return true;
@@ -161,7 +158,7 @@ final class RaceSimulation {
         if (waitingOffer == mine) {
             waitingOffer = null;
         } else if (mine.takers.get() == 0) {
-            lostSuitors.incrementAndGet();           // oferta a disparut fara sa o fi luat cineva
+            lostSuitors.incrementAndGet();
         }
         return false;
     }
@@ -172,7 +169,7 @@ final class RaceSimulation {
     }
 
     void stop() throws InterruptedException {
-        running = false; // R6: fara volatile, nimic nu garanteaza ca firele vad scrierea
+        running = false;
         List<Thread> snapshot;
         synchronized (threads) {
             snapshot = new ArrayList<>(threads);
@@ -200,20 +197,20 @@ final class RaceSimulation {
         System.out.println("===== RACE CONDITIONS REPORT =====");
         System.out.printf("Food: expected %d (initial %d + produced %d - eaten %d), counter says %d -> %s%n",
                 expectedFood, initialFood, auditProduced.get(), auditConsumed.get(), actualFood,
-                verdict(expectedFood == actualFood, "lost updates (R2)"));
+                verdict(expectedFood == actualFood, "lost updates"));
         System.out.printf("Lowest food value observed: %d -> %s%n", food.getLowestObserved(),
-                verdict(food.getLowestObserved() >= 0, "food eaten that did not exist (R1)"));
+                verdict(food.getLowestObserved() >= 0, "food eaten that did not exist"));
         System.out.printf("Cells created: %d, ArrayList size: %d, null entries: %d, add exceptions: %d -> %s%n",
                 auditCreated.get(), cells.size(), nullEntries, listAddFailures.get(),
                 verdict(auditCreated.get() == cells.size() && nullEntries == 0 && listAddFailures.get() == 0,
-                        "corrupted ArrayList (R4)"));
+                        "corrupted ArrayList"));
         System.out.printf("Population counter: %d, real live threads: %d -> %s%n",
-                aliveCount, auditLive.get(), verdict(aliveCount == auditLive.get(), "non-atomic ++/-- (R5)"));
+                aliveCount, auditLive.get(), verdict(aliveCount == auditLive.get(), "non-atomic ++/--"));
         System.out.printf("Duplicate cell ids: %d -> %s%n", duplicateIds.get(),
-                verdict(duplicateIds.get() == 0, "non-atomic id generator (R8)"));
+                verdict(duplicateIds.get() == 0, "non-atomic id generator"));
         System.out.printf("Sexual children: %d, suitors taken by 2+ partners: %d, suitors lost: %d -> %s%n",
                 sexualChildren.get(), suitorsTakenTwice.get(), lostSuitors.get(),
-                verdict(suitorsTakenTwice.get() == 0 && lostSuitors.get() == 0, "unsynchronized mating (R7)"));
+                verdict(suitorsTakenTwice.get() == 0 && lostSuitors.get() == 0, "unsynchronized mating"));
         System.out.printf("Asexual divisions: %d%n", divisions.get());
     }
 
